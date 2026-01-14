@@ -1,0 +1,7 @@
+{
+  "name": "SnapSell",
+  "description": "A marketplace studio utility that turns a single product photo into a complete listing pack with 4 studio angles and optimized copy.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
