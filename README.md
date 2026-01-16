@@ -3,6 +3,7 @@
 SnapSell turns a few product photos into:
 - A marketplace-ready listing pack (title, description, bullets, tags, condition checklist)
 - A set of clean “studio” product images (Front / 3/4 Angle / Side / Detail)
+- Use Here: https://snapsell-taupe.vercel.app/
 
 ## How it works (Pollinations-only)
 
