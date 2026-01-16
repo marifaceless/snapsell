@@ -1,5 +1,6 @@
 
 import React, { useState } from 'react';
+import { validatePollinationsKey } from '../services/pollinationsService';
 
 interface Props {
   onKeySaved: (key: string) => void;
@@ -28,21 +29,11 @@ export const KeyOnboarding: React.FC<Props> = ({ onKeySaved }) => {
 
     setIsValidating(true);
     try {
-      // Validate key by making a small request to Pollinations
-      const encodedPrompt = encodeURIComponent('ping');
-      const response = await fetch(`https://gen.pollinations.ai/text/${encodedPrompt}?key=${trimmedKey}`);
-      
-      if (response.status === 401 || response.status === 403) {
-        setError('Invalid Pollinations API key. Please check your key and try again.');
-      } else if (!response.ok) {
-        setError(`Connection error (${response.status}). Please try again later.`);
-      } else {
-        // Key is valid, store locally
-        localStorage.setItem('snap_sell_pk', trimmedKey);
-        onKeySaved(trimmedKey);
-      }
+      await validatePollinationsKey(trimmedKey);
+      localStorage.setItem('snap_sell_pk', trimmedKey);
+      onKeySaved(trimmedKey);
     } catch (err) {
-      setError('Failed to connect to Pollinations. Check your internet connection.');
+      setError(err instanceof Error ? err.message : 'Failed to connect to Pollinations. Check your internet connection.');
     } finally {
       setIsValidating(false);
     }
@@ -130,12 +121,12 @@ export const KeyOnboarding: React.FC<Props> = ({ onKeySaved }) => {
           </a>
           <div className="w-1 h-1 bg-gray-200 rounded-full mt-1.5"></div>
           <a 
-            href="https://ai.google.dev/gemini-api/docs/billing" 
+            href="https://enter.pollinations.ai/api/docs" 
             target="_blank" 
             rel="noopener noreferrer"
             className="text-[11px] font-bold text-gray-400 hover:text-[#1F3D2B] uppercase tracking-widest transition-colors"
           >
-            Billing
+            API Docs
           </a>
         </div>
       </div>

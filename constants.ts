@@ -1,5 +1,5 @@
 
-import { BackgroundStyle } from './types';
+import { BackgroundStyle, StudioConfig } from './types';
 
 export const COLORS = {
   background: '#FAFAF7',
@@ -10,57 +10,61 @@ export const COLORS = {
   border: '#E5E5E5',
 };
 
-export const LISTING_PROMPT_TEMPLATE = (context: any) => `
-Return ONLY valid JSON matching this schema and NOTHING else.
-Do NOT invent brand/model/material/dimensions/compatibility/authenticity/warranty if unknown.
-If uncertain, add "confirm: ____" to condition_checklist.
+export const LISTING_SYSTEM_PROMPT = `
+You are SnapSell, a marketplace listing assistant.
 
-{
-  "product_summary": "string",
-  "likely_category": "string",
-  "key_attributes": ["string", ...],
-  "do_not_invent": ["string", ...],
-  "photo_style_prompt": "string",
-  "platform_listing": {
-    "title": "string",
-    "short_description": "string",
-    "bullets": ["string","string","string","string","string"],
-    "tags": ["string","string","string","string","string","string","string","string","string","string"],
-    "condition_checklist": ["string","string","string","string","string","string"]
-  },
-  "platform_variants": {
-    "facebook_marketplace": {
-      "title": "string",
-      "short_description": "string",
-      "bullets": ["string","string","string","string","string"]
-    },
-    "ebay": {
-      "title": "string",
-      "short_description": "string",
-      "bullets": ["string","string","string","string","string"]
-    }
-  }
-}
+Goals:
+- Use the provided reference product photos + user context to generate an accurate, high-converting marketplace listing.
+- Be conservative: do NOT invent specs, model numbers, materials, dimensions, authenticity claims, compatibility, or warranty details.
+- If uncertain, add "confirm: ____" items to the condition checklist.
 
-Context:
+Return data that is helpful for sellers:
+- Concise, scannable title and description
+- 5 strong bullets
+- 10 searchable tags
+- A condition checklist the seller can verify quickly
+`.trim();
+
+export const buildListingUserText = (context: StudioConfig) => `
+Listing request (use attached reference photos):
+
 Item Name: ${context.itemName || 'unknown'}
 Brand: ${context.brand || 'unknown'}
 Condition: ${context.condition}
 Category Hint: ${context.categoryHint || 'none'}
 Platform: ${context.platform}
-Reference Image URL: ${context.imageUrl}
-`;
+
+Output tone:
+- Clear, honest, marketplace-friendly
+`.trim();
 
 export const BASE_STYLE = (stylePrompt: string) => 
   `${stylePrompt}. clean studio lighting, realistic product photography, sharp focus, accurate colors, no extra objects, no text overlay, no watermark, no logo stamp, perfectly centered square composition.`;
 
-export const ANGLE_PROMPTS = {
-  Front: (item: string, style: string, bg: string) => 
-    `Product photo of ${item} — straight-on front view. ${style}. background: ${bg}. maintain 1:1 square aspect ratio. keep the exact same item shape/color/material as the reference image. remove clutter.`,
-  '3/4 Angle': (item: string, style: string, bg: string) => 
-    `Product photo of ${item} — 3/4 front-left angle, slightly elevated camera, shows depth. ${style}. background: ${bg}. maintain 1:1 square aspect ratio. keep the exact same item as the reference.`,
-  Side: (item: string, style: string, bg: string) => 
-    `Product photo of ${item} — pure side profile view, neutral angle. ${style}. background: ${bg}. maintain 1:1 square aspect ratio. keep the exact same item as the reference.`,
-  Detail: (item: string, style: string, bg: string) => 
-    `Close-up detail product photo of ${item} — focus on texture and a key detail, shallow depth of field but realistic. ${style}. background: ${bg}. maintain 1:1 square aspect ratio. keep the exact same item as the reference.`
-};
+export const ANGLE_PROMPTS_SYSTEM_PROMPT = `
+You are SnapSell's photo prompt writer.
+
+Task:
+- Use the attached reference photos to write 4 prompts (Front, 3/4 Angle, Side, Detail) for studio-quality product images.
+- Keep the generated item consistent with the reference: same shape, color, material, markings, and overall identity.
+- Do not add extra objects, logos, text overlays, watermarks, hands, props, or background clutter.
+- Prompts should be precise, realistic product photography, 1:1 square composition.
+
+Return:
+- prompts: object with keys: "Front", "3/4 Angle", "Side", "Detail"
+- negative_prompt: a single string
+`.trim();
+
+export const buildAnglePromptsUserText = (params: {
+  context: StudioConfig;
+  listingPhotoStylePrompt?: string;
+}) => `
+Photo prompt request (use attached reference photos):
+
+Item Name: ${params.context.itemName || 'product'}
+Background Style: ${params.context.backgroundStyle}
+Safe Mode: ${params.context.safeMode ? 'on' : 'off'}
+
+Preferred style cue (from listing intelligence):
+${params.listingPhotoStylePrompt || 'clean studio setup'}
+`.trim();

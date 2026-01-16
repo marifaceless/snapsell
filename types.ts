@@ -56,7 +56,7 @@ export interface StudioConfig {
   backgroundStyle: BackgroundStyle;
   imageSize: 768 | 1024;
   seed: number;
-  imageUrl: string;
+  referenceImageUrls: string[];
   safeMode: boolean;
 }
 
@@ -67,4 +67,6 @@ export interface ImageResult {
   status: 'idle' | 'loading' | 'success' | 'error';
   fallbackUsed: boolean;
   error?: string;
+  prompt?: string;
+  modelUsed?: string;
 }

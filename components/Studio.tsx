@@ -8,8 +8,8 @@ import {
   ImageResult, 
   ListingIntelligence 
 } from '../types';
-import { COLORS, LISTING_PROMPT_TEMPLATE, BASE_STYLE, ANGLE_PROMPTS } from '../constants';
-import { generateText, generateImageWithFallback } from '../services/pollinationsService';
+import { ANGLE_PROMPTS_SYSTEM_PROMPT, buildAnglePromptsUserText, buildListingUserText, LISTING_SYSTEM_PROMPT } from '../constants';
+import { generateAnglePrompts, generateImageWithFallback, generateListingIntelligence } from '../services/pollinationsService';
 import { ListingEditor } from './ListingEditor';
 
 // Access heic2any from global scope
@@ -30,7 +30,7 @@ export const Studio: React.FC<Props> = ({ apiKey, onLogout }) => {
     backgroundStyle: BackgroundStyle.PureWhite,
     imageSize: 1024,
     seed: Math.floor(Math.random() * 100000),
-    imageUrl: '',
+    referenceImageUrls: [],
     safeMode: true,
   });
 
@@ -47,17 +47,47 @@ export const Studio: React.FC<Props> = ({ apiKey, onLogout }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [activeTab, setActiveTab] = useState<'photos' | 'listing'>('photos');
-  const [localPreview, setLocalPreview] = useState<string | null>(null);
+  const [uploadPreview, setUploadPreview] = useState<string | null>(null);
+  const [referenceUrlInput, setReferenceUrlInput] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageObjectUrlsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     return () => {
-      if (localPreview) URL.revokeObjectURL(localPreview);
+      for (const url of imageObjectUrlsRef.current) URL.revokeObjectURL(url);
+      imageObjectUrlsRef.current.clear();
     };
-  }, [localPreview]);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (uploadPreview) URL.revokeObjectURL(uploadPreview);
+    };
+  }, [uploadPreview]);
+
+  const trackImageObjectUrl = (url: string | null) => {
+    if (url && url.startsWith('blob:')) imageObjectUrlsRef.current.add(url);
+  };
+
+  const revokeImageObjectUrl = (url: string | null) => {
+    if (url && url.startsWith('blob:')) {
+      URL.revokeObjectURL(url);
+      imageObjectUrlsRef.current.delete(url);
+    }
+  };
 
   const downloadImage = async (url: string, label: string) => {
     try {
+      if (url.startsWith('blob:')) {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${config.itemName || 'product'}-${label.toLowerCase().replace(' ', '-')}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        return;
+      }
+
       const response = await fetch(url);
       const blob = await response.blob();
       const blobUrl = window.URL.createObjectURL(blob);
@@ -74,10 +104,24 @@ export const Studio: React.FC<Props> = ({ apiKey, onLogout }) => {
     }
   };
 
+  const addReferenceUrl = (rawUrl: string) => {
+    const url = rawUrl.trim();
+    if (!url) return;
+
+    setConfig(prev => {
+      if (prev.referenceImageUrls.includes(url)) return prev;
+      return { ...prev, referenceImageUrls: [...prev.referenceImageUrls, url] };
+    });
+    setReferenceUrlInput('');
+  };
+
   const uploadImage = async (file: File) => {
     setIsUploading(true);
     const previewUrl = URL.createObjectURL(file);
-    setLocalPreview(previewUrl);
+    setUploadPreview(prev => {
+      if (prev) URL.revokeObjectURL(prev);
+      return previewUrl;
+    });
 
     try {
       let fileToUpload: File | Blob = file;
@@ -129,13 +173,10 @@ export const Studio: React.FC<Props> = ({ apiKey, onLogout }) => {
 
       // Ensure HTTPS
       const secureUrl = result.data.link.replace('http://', 'https://');
-      setConfig(prev => ({ ...prev, imageUrl: secureUrl }));
+      addReferenceUrl(secureUrl);
     } catch (error: any) {
       console.error('Upload error details:', error);
       alert(`Upload Limit/Error: ${error.message}\n\nThis app uses a public free upload key which may be busy. \n\nSOLUTION: Upload your image to postimages.org (free) and paste the 'Direct Link' here.`);
-      
-      // Keep local preview for UX but clear the URL config so user knows they need to provide a link
-      setConfig(prev => ({ ...prev, imageUrl: '' }));
     } finally {
       setIsUploading(false);
       // Reset input so same file can be selected again if needed
@@ -169,54 +210,84 @@ export const Studio: React.FC<Props> = ({ apiKey, onLogout }) => {
   }, []);
 
   const handleCreateListing = async () => {
-    if (!config.imageUrl) {
-      alert('Please provide a product photo (URL or upload) first.');
+    if (config.referenceImageUrls.length === 0) {
+      alert('Please provide at least one product reference photo (URL or upload) first.');
       return;
     }
 
     setIsGenerating(true);
     setListing(null);
-    setImages(prev => prev.map(img => ({ ...img, status: 'loading', url: null, fallbackUsed: false })));
+    setImages(prev =>
+      prev.map(img => {
+        revokeImageObjectUrl(img.url);
+        return { ...img, status: 'loading', url: null, fallbackUsed: false, error: undefined, prompt: undefined, modelUsed: undefined };
+      })
+    );
 
     try {
-      const listingPrompt = LISTING_PROMPT_TEMPLATE(config);
-      const intelligence = await generateText(listingPrompt, apiKey);
-      if (intelligence) {
-        setListing(intelligence);
-      }
+      const intelligence = await generateListingIntelligence({
+        apiKey,
+        systemPrompt: LISTING_SYSTEM_PROMPT,
+        userText: buildListingUserText(config),
+        referenceImageUrls: config.referenceImageUrls,
+      });
+      setListing(intelligence);
 
-      const stylePrompt = intelligence?.photo_style_prompt || "studio setup";
-      const fullStyle = BASE_STYLE(stylePrompt);
+      const promptPack = await generateAnglePrompts({
+        apiKey,
+        systemPrompt: ANGLE_PROMPTS_SYSTEM_PROMPT,
+        userText: buildAnglePromptsUserText({ context: config, listingPhotoStylePrompt: intelligence?.photo_style_prompt }),
+        referenceImageUrls: config.referenceImageUrls,
+      });
 
-      const imagePromises = images.map(async (img) => {
-        const prompt = (ANGLE_PROMPTS as any)[img.label](
-          config.itemName || 'product',
-          fullStyle,
-          config.backgroundStyle
-        );
+      const imagePromises = images.map(async (img, index) => {
+        const prompt = promptPack?.prompts?.[img.label] || '';
+        if (!prompt) {
+          setImages(prev => prev.map(p => (p.id === img.id ? { ...p, status: 'error', error: 'Missing prompt for this angle.' } : p)));
+          return;
+        }
 
-        const result = await generateImageWithFallback(
-          prompt,
-          apiKey,
-          config.imageSize,
-          config.imageSize,
-          config.seed + Math.random(),
-          config.imageUrl,
-          config.safeMode
-        );
+        try {
+          const result = await generateImageWithFallback({
+            apiKey,
+            prompt,
+            width: config.imageSize,
+            height: config.imageSize,
+            seed: config.seed + index,
+            safe: config.safeMode,
+            referenceImageUrls: config.referenceImageUrls,
+            negativePrompt: promptPack.negative_prompt,
+          });
 
-        setImages(prev => prev.map(p => p.id === img.id ? {
-          ...p,
-          url: result.url,
-          status: result.url ? 'success' : 'error',
-          fallbackUsed: result.fallbackUsed,
-          error: result.error
-        } : p));
+          trackImageObjectUrl(result.objectUrl);
+          setImages(prev =>
+            prev.map(p =>
+              p.id === img.id
+                ? {
+                    ...p,
+                    url: result.objectUrl,
+                    status: 'success',
+                    fallbackUsed: result.fallbackUsed,
+                    error: result.warning,
+                    prompt,
+                    modelUsed: result.modelUsed,
+                  }
+                : p
+            )
+          );
+        } catch (error: any) {
+          setImages(prev =>
+            prev.map(p =>
+              p.id === img.id ? { ...p, status: 'error', error: error?.message || 'Failed to render studio view', prompt } : p
+            )
+          );
+        }
       });
 
       await Promise.allSettled(imagePromises);
     } catch (err) {
       console.error(err);
+      alert(err instanceof Error ? err.message : 'Failed to generate listing/images.');
     } finally {
       setIsGenerating(false);
     }
@@ -237,21 +308,37 @@ export const Studio: React.FC<Props> = ({ apiKey, onLogout }) => {
           <section>
             <div className="flex justify-between items-end mb-4">
               <h2 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Product Reference</h2>
-              {(config.imageUrl || localPreview) && (
-                <button onClick={() => { setConfig({...config, imageUrl: ''}); setLocalPreview(null); }} className="text-[10px] font-bold text-[#1F3D2B] hover:underline">Clear</button>
+              {config.referenceImageUrls.length > 0 && (
+                <button
+                  onClick={() => setConfig(prev => ({ ...prev, referenceImageUrls: [] }))}
+                  className="text-[10px] font-bold text-[#1F3D2B] hover:underline"
+                >
+                  Clear All
+                </button>
               )}
             </div>
             
             <div className="space-y-4">
               <div>
                 <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1.5 ml-1 tracking-widest">Image URL (Best Reliability)</label>
-                <input 
-                  type="text" 
-                  className="w-full p-3 rounded-xl border border-gray-100 text-xs focus:border-[#1F3D2B] focus:ring-4 focus:ring-[#1F3D2B]/5 focus:outline-none transition-all bg-[#FAFAF7]"
-                  placeholder="Paste direct image link (e.g. from postimages.org)"
-                  value={config.imageUrl}
-                  onChange={(e) => setConfig({ ...config, imageUrl: e.target.value })}
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    className="w-full p-3 rounded-xl border border-gray-100 text-xs focus:border-[#1F3D2B] focus:ring-4 focus:ring-[#1F3D2B]/5 focus:outline-none transition-all bg-[#FAFAF7]"
+                    placeholder="Paste a direct image link (ends with .jpg/.png/etc)"
+                    value={referenceUrlInput}
+                    onChange={(e) => setReferenceUrlInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && addReferenceUrl(referenceUrlInput)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => addReferenceUrl(referenceUrlInput)}
+                    className="px-4 rounded-xl bg-white border border-gray-100 text-[10px] font-bold uppercase tracking-widest hover:bg-gray-50 transition-all disabled:opacity-40"
+                    disabled={!referenceUrlInput.trim()}
+                  >
+                    Add
+                  </button>
+                </div>
               </div>
 
               <div className="relative">
@@ -267,7 +354,7 @@ export const Studio: React.FC<Props> = ({ apiKey, onLogout }) => {
                 onClick={() => fileInputRef.current?.click()}
                 className={`relative aspect-video rounded-2xl border-2 border-dashed transition-all duration-300 cursor-pointer flex flex-col items-center justify-center p-4 group ${
                   isDragging ? 'border-[#1F3D2B] bg-[#1F3D2B]/5' : 
-                  (config.imageUrl || localPreview) ? 'border-[#1F3D2B]/20 bg-white' : 'border-gray-200 bg-[#FAFAF7] hover:bg-gray-50'
+                  (config.referenceImageUrls.length > 0 || uploadPreview) ? 'border-[#1F3D2B]/20 bg-white' : 'border-gray-200 bg-[#FAFAF7] hover:bg-gray-50'
                 }`}
               >
                 <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept="image/png,image/jpeg,image/jpg,image/heic,image/heif" />
@@ -276,11 +363,11 @@ export const Studio: React.FC<Props> = ({ apiKey, onLogout }) => {
                     <div className="w-8 h-8 border-2 border-[#1F3D2B]/10 border-t-[#1F3D2B] rounded-full animate-spin" />
                     <span className="text-[10px] font-bold text-gray-400 uppercase animate-pulse">Uploading to Imgur...</span>
                   </div>
-                ) : (config.imageUrl || localPreview) ? (
+                ) : uploadPreview ? (
                   <div className="w-full h-full relative overflow-hidden rounded-lg">
-                    <img src={config.imageUrl || localPreview || ''} alt="Reference" className={`w-full h-full object-contain ${!config.imageUrl ? 'opacity-50 grayscale' : ''}`} />
+                    <img src={uploadPreview} alt="Upload preview" className="w-full h-full object-contain opacity-70" />
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                      <span className="text-white text-[10px] font-bold uppercase tracking-widest bg-black/20 px-4 py-2 rounded-full backdrop-blur-sm">Change Image</span>
+                      <span className="text-white text-[10px] font-bold uppercase tracking-widest bg-black/20 px-4 py-2 rounded-full backdrop-blur-sm">Upload Another</span>
                     </div>
                   </div>
                 ) : (
@@ -293,6 +380,28 @@ export const Studio: React.FC<Props> = ({ apiKey, onLogout }) => {
                   </div>
                 )}
               </div>
+
+              {config.referenceImageUrls.length > 0 && (
+                <div className="grid grid-cols-3 gap-2">
+                  {config.referenceImageUrls.map((url, idx) => (
+                    <div key={`${url}-${idx}`} className="relative rounded-xl overflow-hidden border border-gray-100 bg-white">
+                      <img src={url} alt={`Reference ${idx + 1}`} className="w-full h-20 object-cover" />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setConfig(prev => ({
+                            ...prev,
+                            referenceImageUrls: prev.referenceImageUrls.filter((u, i) => !(u === url && i === idx)),
+                          }))
+                        }
+                        className="absolute top-1 right-1 bg-black/60 text-white text-[10px] font-bold px-2 py-1 rounded-lg"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </section>
 
@@ -397,7 +506,7 @@ export const Studio: React.FC<Props> = ({ apiKey, onLogout }) => {
           <div className="pt-6">
             <button
               onClick={handleCreateListing}
-              disabled={isGenerating || isUploading || !config.imageUrl}
+              disabled={isGenerating || isUploading || config.referenceImageUrls.length === 0}
               className="w-full bg-[#1F3D2B] text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-3 hover:opacity-95 shadow-md shadow-[#1F3D2B]/10 active:scale-[0.98] transition-all disabled:opacity-50"
             >
               {isGenerating ? (
@@ -482,11 +591,11 @@ export const Studio: React.FC<Props> = ({ apiKey, onLogout }) => {
                     Download
                   </button>
                   <button 
-                    disabled={img.status !== 'success'} 
-                    onClick={() => { if (img.url) { navigator.clipboard.writeText(img.url); alert('Link copied!'); } }} 
+                    disabled={img.status !== 'success' || !img.prompt} 
+                    onClick={() => { if (img.prompt) { navigator.clipboard.writeText(img.prompt); alert('Prompt copied!'); } }} 
                     className="flex-1 py-3 text-[10px] font-bold uppercase tracking-widest bg-white border border-gray-100 rounded-xl hover:bg-gray-50 transition-all disabled:opacity-30"
                   >
-                    Copy Link
+                    Copy Prompt
                   </button>
                 </div>
               </div>

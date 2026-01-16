@@ -1,20 +1,44 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# SnapSell
 
-# Run and deploy your AI Studio app
+SnapSell turns a few product photos into:
+- A marketplace-ready listing pack (title, description, bullets, tags, condition checklist)
+- A set of clean “studio” product images (Front / 3/4 Angle / Side / Detail)
 
-This contains everything you need to run your app locally.
+## How it works (Pollinations-only)
 
-View your app in AI Studio: https://ai.studio/apps/drive/1WKagA5CrU74GjCf7sxhLHhfPi7ssgFq6
+SnapSell uses the Pollinations API gateway (`gen.pollinations.ai`):
+- **Listing intelligence (vision):** `openai-fast` with your reference images + item context
+- **Photo prompts (vision):** `openai-fast` generates one prompt per angle
+- **Final images:** `nanobanana-pro` using your reference image(s)
 
-## Run Locally
+No Gemini API keys are used in this repo.
 
-**Prerequisites:**  Node.js
+## Reference images
 
+SnapSell needs publicly accessible image URLs to send to Pollinations (for vision + image-to-image).
+- You can paste a direct image URL (recommended).
+- Or upload images; SnapSell uploads to **Imgur** using an anonymous Client-ID.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Privacy note: Imgur uploads are public/unlisted URLs. Don’t upload sensitive photos.
+
+## Pollinations API key
+
+Get a key at `https://enter.pollinations.ai`.
+- **`pk_` keys:** meant for client-side apps (rate-limited / beta)
+- **`sk_` keys:** server-side only (don’t expose publicly)
+
+This app stores your key locally in the browser (`localStorage`) and sends requests directly from your device.
+
+## Run locally
+
+Prereqs: Node.js
+
+1. Install deps: `npm install`
+2. Start dev server: `npm run dev`
+3. Open: `http://localhost:3000`
+
+## Troubleshooting
+
+- “Invalid Pollinations API key”: double-check your key in the onboarding screen.
+- Image generation fails: try adding a more “direct” reference image URL (ends in `.jpg/.png/.webp`) or upload again.
+- If Imgur upload is rate-limited: upload to another host (e.g. postimages.org) and paste the direct link.
